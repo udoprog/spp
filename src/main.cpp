@@ -1,20 +1,158 @@
-#include "subprocess.hpp"
+/*#include "subprocess.hpp"
 
 #include <iostream>
 
-int main() {
-  subprocess cat("echo");
-  cat << "Fudge" << "This" << "Shit" << " " << "Hello" << 1231L << 12.12f;
-  cat.start();
+int main(int argc, char** argv) {
+  sp::process cat = sp::process("cat") << "/etc/passwd";
+  sp::instance inst1 = cat.spawn();
   
-  std::cout << "Waiting for " << cat.get_pid() << std::endl;
+  inst1.start();
   
+  int fdo = inst1.get_stderr();
   char buffer[1024];
   
-  size_t r = read(cat.get_stdout(), buffer, 1024);
-  buffer[r] = NULL;
-  std::cout << buffer << std::endl;
+  while (true) {
+    size_t r = read(fdo, buffer, 1024);
+    if (r <= 0) break;
+    buffer[r] = NULL;
+    std::cout << buffer << std::flush;
+  }
   
-  cat.flush();
-  return cat.wait();
+  int st = inst1.wait();
+  std::cout << "status: " << st;
+  return 0;
+}*/
+//
+// async_tcp_echo_server.cpp
+// ~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// Copyright (c) 2003-2010 Christopher M. Kohlhoff (chris at kohlhoff dot com)
+//
+// Distributed under the Boost Software License, Version 1.0. (See accompanying
+// file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
+//
+
+#include <cstdlib>
+#include <iostream>
+#include <boost/bind.hpp>
+#include <boost/asio.hpp>
+
+using boost::asio::ip::tcp;
+
+class session
+{
+public:
+  session(boost::asio::io_service& io_service)
+    : socket_(io_service)
+  {
+  }
+
+  tcp::socket& socket()
+  {
+    return socket_;
+  }
+
+  void start()
+  {
+    socket_.async_read_some(boost::asio::buffer(data_, max_length),
+        boost::bind(&session::handle_read, this,
+          boost::asio::placeholders::error,
+          boost::asio::placeholders::bytes_transferred));
+  }
+
+  void handle_read(const boost::system::error_code& error,
+      size_t bytes_transferred)
+  {
+    if (!error)
+    {
+      boost::asio::async_write(socket_,
+          boost::asio::buffer(data_, bytes_transferred),
+          boost::bind(&session::handle_write, this,
+            boost::asio::placeholders::error));
+    }
+    else
+    {
+      delete this;
+    }
+  }
+
+  void handle_write(const boost::system::error_code& error)
+  {
+    if (!error)
+    {
+      socket_.async_read_some(boost::asio::buffer(data_, max_length),
+          boost::bind(&session::handle_read, this,
+            boost::asio::placeholders::error,
+            boost::asio::placeholders::bytes_transferred));
+    }
+    else
+    {
+      delete this;
+    }
+  }
+
+private:
+  tcp::socket socket_;
+  enum { max_length = 1024 };
+  char data_[max_length];
+};
+
+class server
+{
+public:
+  server(boost::asio::io_service& io_service, short port)
+    : io_service_(io_service),
+      acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
+  {
+    session* new_session = new session(io_service_);
+    acceptor_.async_accept(new_session->socket(),
+        boost::bind(&server::handle_accept, this, new_session,
+          boost::asio::placeholders::error));
+  }
+
+  void handle_accept(session* new_session,
+      const boost::system::error_code& error)
+  {
+    if (!error)
+    {
+      new_session->start();
+      new_session = new session(io_service_);
+      acceptor_.async_accept(new_session->socket(),
+          boost::bind(&server::handle_accept, this, new_session,
+            boost::asio::placeholders::error));
+    }
+    else
+    {
+      delete new_session;
+    }
+  }
+
+private:
+  boost::asio::io_service& io_service_;
+  tcp::acceptor acceptor_;
+};
+
+int main(int argc, char* argv[])
+{
+  try
+  {
+    if (argc != 2)
+    {
+      std::cerr << "Usage: async_tcp_echo_server <port>\n";
+      return 1;
+    }
+
+    boost::asio::io_service io_service;
+
+    using namespace std; // For atoi.
+    server s1(io_service, atoi(argv[1]));
+    
+    io_service.run();
+  }
+  catch (std::exception& e)
+  {
+    std::cerr << "Exception: " << e.what() << "\n";
+  }
+
+  return 0;
 }
